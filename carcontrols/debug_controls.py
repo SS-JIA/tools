@@ -10,6 +10,13 @@ import selfdrive.messaging as messaging
 from selfdrive.car.car_helpers import get_car
 from selfdrive.boardd.boardd import can_list_to_can_capnp
 
+from selfdrive.car.toyota.interface import CarInterface
+from selfdrive.car.toyota.carcontroller import CarController
+from selfdrive.car.toyota.values import CAR
+
+from common.params import Params
+from selfdrive.car.vin import VIN_UNKNOWN
+
 
 def steer_thread():
   poller = zmq.Poller()
@@ -24,7 +31,11 @@ def steer_thread():
   button_1_last = 0
   enabled = False
 
-  CI, CP = get_car(logcan, sendcan)
+  CP = CarInterface.get_params(CAR.COROLLA_TSS2)
+  CI = CarInterface(CP, CarController)
+  
+  Params().put("CarVin", VIN_UNKNOWN)
+  Params().put("CarParams", CP.to_bytes())
 
   CC = car.CarControl.new_message()
   joystick = messaging.recv_one(joystick_sock)
@@ -43,10 +54,10 @@ def steer_thread():
     # the other.
     actuators = car.CarControl.Actuators.new_message()
 
-    axis_3 = clip(-joystick.testJoystick.axes[3] * 1.05, -1., 1.)          # -1 to 1
+    axis_3 = clip(-joystick.testJoystick.axes[0] * 1.05, -1., 1.)          # -1 to 1
     actuators.steer = axis_3
     actuators.steerAngle = axis_3 * 43.   # deg
-    axis_1 = clip(-joystick.testJoystick.axes[1] * 1.05, -1., 1.)          # -1 to 1
+    axis_1 = clip(-joystick.testJoystick.axes[2] * 1.05, -1., 1.)          # -1 to 1
     actuators.gas = max(axis_1, 0.)
     actuators.brake = max(-axis_1, 0.)
 
@@ -57,7 +68,7 @@ def steer_thread():
 
     button_1_last = button_1
 
-    #print "enable", enabled, "steer", actuators.steer, "accel", actuators.gas - actuators.brake
+    print("enable {}, steer {}, accel {}, pcm_cancel {}".format(enabled, actuators.steer, actuators.gas - actuators.brake, pcm_cancel_cmd))
 
     hud_alert = 0
     audible_alert = 0
@@ -72,23 +83,25 @@ def steer_thread():
     CC.actuators.steer = actuators.steer
     CC.actuators.steerAngle = actuators.steerAngle
     CC.hudControl.visualAlert = hud_alert
+    CC.hudControl.leadVisible = True
     CC.hudControl.setSpeed = 20
     CC.cruiseControl.cancel = pcm_cancel_cmd
+    CC.cruiseControl.override = True
     CC.enabled = enabled
     can_sends = CI.apply(CC)
     sendcan.send(can_list_to_can_capnp(can_sends, msgtype='sendcan'))
 
-    # broadcast carState
-    cs_send = messaging.new_message()
-    cs_send.init('carState')
-    cs_send.carState = copy(CS)
-    carstate.send(cs_send.to_bytes())
+  #  # broadcast carState
+  #  cs_send = messaging.new_message()
+  #  cs_send.init('carState')
+  #  cs_send.carState = copy(CS)
+  #  carstate.send(cs_send.to_bytes())
 
-    # broadcast carControl
-    cc_send = messaging.new_message()
-    cc_send.init('carControl')
-    cc_send.carControl = copy(CC)
-    carcontrol.send(cc_send.to_bytes())
+  #  # broadcast carControl
+  #  cc_send = messaging.new_message()
+  #  cc_send.init('carControl')
+  #  cc_send.carControl = copy(CC)
+  #  carcontrol.send(cc_send.to_bytes())
 
 
     # Limit to 100 frames per second
